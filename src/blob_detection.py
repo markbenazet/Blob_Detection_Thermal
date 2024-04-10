@@ -3,28 +3,44 @@ import numpy as np
 
 def detect_heat_source(frame):
     # Convert frame to HSV color space
-    hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    # Convert the captured frame to HSV color space for filtering
+    filter_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # Define lower and upper bounds for Ironbow colors in HSV corresponding to the warmer range
-    lower_red = np.array([0, 100, 100])
-    upper_yellow = np.array([30, 255, 255])
 
-    # Threshold the frame to get only the warmer regions
-    heat_source_mask = cv2.inRange(hsv_frame, lower_red, upper_yellow)
+    # Define the lower and upper bounds for the HSV filter
+    lower_bound = np.array([10, 0, 0])
+    upper_bound = np.array([60, 255, 255])
 
-    # Apply morphological operations to remove noise and make contours "bigger"
-    kernel = np.ones((15, 15), np.uint8)
-    heat_source_mask = cv2.morphologyEx(heat_source_mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.inRange(filter_frame, lower_bound, upper_bound)
 
-    # Find contours of the heat source
-    contours, _ = cv2.findContours(heat_source_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Use morphological operations to clean up the mask
+    kernel = np.ones((2, 2), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)  # Removes small objects/noise from the foreground
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)  # Closes small holes in the foreground objects
+    result = cv2.bitwise_and(frame, frame, mask=mask)
 
-    # Draw bounding box around the detected heat source
-    for contour in contours:
-        x, y, w, h = cv2.boundingRect(contour)
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    # Set up the blob detector parameters
+    params = cv2.SimpleBlobDetector_Params()
+    params.minThreshold = 10
+    params.maxThreshold = 200
+    params.filterByColor = True
+    params.blobColor =255
+    params.filterByInertia = False
+    params.filterByConvexity = False
+    params.filterByArea = True
+    params.minArea = 500  # Adjust this threshold as needed to filter out small blobs
 
-    return frame
+    # Create the blob detector with the specified parameters
+    detector = cv2.SimpleBlobDetector_create(params)
+
+    # Perform blob detection
+    keypoints = detector.detect(result)
+
+    # Draw detected blobs on the frame
+    frame_with_keypoints = cv2.drawKeypoints(frame, keypoints, np.array([]), (0,255, 0),
+                                                cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+        
+    return result
 
 # Open a video capture object
 video_capture = cv2.VideoCapture('../videos/video1.mp4')  # Replace with the path to your thermal video file
