@@ -1,45 +1,76 @@
 import cv2
 import numpy as np
+from scipy.ndimage import gaussian_filter1d
+
+recent_x_positions = []
+recent_y_positions = []
+max_positions = 20
 
 def detect_heat_source(frame):
-    # Convert frame to HSV color space
-    # Convert the captured frame to HSV color space for filtering
+     # Convert the captured frame to HSV color space for filtering
     filter_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-
     # Define the lower and upper bounds for the HSV filter
-    lower_bound = np.array([10, 0, 0])
+    lower_bound = np.array([0, 0, 0])
     upper_bound = np.array([60, 255, 255])
 
-    mask = cv2.inRange(filter_frame, lower_bound, upper_bound)
+    hsv_mask = cv2.inRange(filter_frame, lower_bound, upper_bound)
 
     # Use morphological operations to clean up the mask
-    kernel = np.ones((2, 2), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)  # Removes small objects/noise from the foreground
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)  # Closes small holes in the foreground objects
-    result = cv2.bitwise_and(frame, frame, mask=mask)
+    gauss_mask = cv2.GaussianBlur(hsv_mask, (5,5), 0)
+    kernel = np.ones((10, 10), np.uint8)
+    mask = cv2.morphologyEx(gauss_mask, cv2.MORPH_OPEN, kernel)  # Removes small objects/noise from the foreground
+    final_mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)  # Closes small holes in the foreground objects
 
-    # Set up the blob detector parameters
-    params = cv2.SimpleBlobDetector_Params()
-    params.minThreshold = 10
-    params.maxThreshold = 200
-    params.filterByColor = True
-    params.blobColor =255
-    params.filterByInertia = False
-    params.filterByConvexity = False
-    params.filterByArea = True
-    params.minArea = 500  # Adjust this threshold as needed to filter out small blobs
 
-    # Create the blob detector with the specified parameters
-    detector = cv2.SimpleBlobDetector_create(params)
+    # Calculate moments of the binary image
+    M = cv2.moments(final_mask)
 
-    # Perform blob detection
-    keypoints = detector.detect(result)
+    # Calculate x, y coordinate of center
+    if M["m00"] != 0: #M["m00"] >= self.min_area and M["m00"] <= self.max_area:
+        cX = int(M["m10"] / M["m00"])
+        cY = int(M["m01"] / M["m00"])
 
-    # Draw detected blobs on the frame
-    frame_with_keypoints = cv2.drawKeypoints(frame, keypoints, np.array([]), (0,255, 0),
-                                                cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-        
+        #Median filter
+        if len(recent_x_positions) >= max_positions:
+            recent_x_positions.pop(0)
+        if len(recent_y_positions) >= max_positions:
+            recent_y_positions.pop(0)
+
+        recent_x_positions.append(cX)
+        recent_y_positions.append(cY)
+
+        # Apply Gaussian filtering to recent_x_positions and recent_y_positions
+        smoothed_x_positions = gaussian_filter1d(recent_x_positions, sigma=5)
+        smoothed_y_positions = gaussian_filter1d(recent_y_positions, sigma=5)
+
+        # Extract single elements from the smoothed arrays
+        smooth_cX = int(smoothed_x_positions[-1])  # Extract the last smoothed value
+        smooth_cY = int(smoothed_y_positions[-1])  # Extract the last smoothed value
+
+        middle_x = int(frame.shape[1] / 2)
+        middle_y = int(frame.shape[0] / 2)
+        rel_x = smooth_cX - middle_x
+        rel_y = smooth_cY - middle_y
+    else:
+        # set values as -1 if no mass found
+        smooth_cX, smooth_cY = -10000, -10000
+        rel_x, rel_y = -10000, -10000 
+
+
+
+    if smooth_cX != -10000 and smooth_cY != -10000:
+
+        result = cv2.bitwise_and(frame, frame, mask=final_mask)
+
+        cv2.circle(result, (smooth_cX, smooth_cY), 5, (255, 255, 255), -1)
+
+        # Display the coordinates on the frame
+        coord_text = f"({rel_x}, {rel_y})"
+        cv2.putText(result, coord_text, (smooth_cX, smooth_cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+    else:
+        result = cv2.bitwise_and(frame, frame, mask=final_mask)
+
     return result
 
 # Open a video capture object
